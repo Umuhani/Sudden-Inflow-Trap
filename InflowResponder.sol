@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-interface IERC20Low {
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+interface IERC20 {
+    function transferFrom(address from, address to, uint256 value) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+    function decimals() external view returns (uint8);
 }
 
-contract InflowResponder {
+contract AutoTopUpResponder {
     address public owner;
-    address public caller; // set to TrapConfig after drosera apply
-    address public coldWallet;
+    address public caller;              // drosera trap contract
+    IERC20 public token;                // token monitored
+    address public safe;                // destination safe
+    address public fundingWallet;       // pre-approved funding wallet
 
-    event AlertEmitted(address indexed token, address indexed safe, uint256 influxAmount, address reporter);
-    event TransferAttempt(address indexed token, address indexed from, address indexed to, uint256 amount, bool success, bytes data);
-    event OwnerChanged(address oldOwner, address newOwner);
-    event CallerChanged(address oldCaller, address newCaller);
-    event ColdWalletChanged(address oldCold, address newCold);
+    uint256 public threshold;           // decimals-scaled threshold
+    uint256 public previousBalance;     // for rising-edge detection
+
+    event RespondExecuted(uint256 beforeBalance, uint256 afterBalance, uint256 amount);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not-owner");
@@ -22,48 +25,51 @@ contract InflowResponder {
     }
 
     modifier onlyCaller() {
-        require(caller == address(0) || msg.sender == caller || msg.sender == owner, "not-caller");
+        // FIXED: responder is now *closed* by default
+        require(msg.sender == caller || msg.sender == owner, "not-caller");
         _;
     }
 
-    constructor(address initialOwner) {
-        owner = initialOwner;
-        emit OwnerChanged(address(0), initialOwner);
+    constructor(
+        address _token,
+        address _safe,
+        address _fundingWallet,
+        uint256 _rawThreshold       // e.g. "10000" for 10k tokens
+    ) {
+        owner = msg.sender;
+        token = IERC20(_token);
+        safe = _safe;
+        fundingWallet = _fundingWallet;
+
+        // Try reading decimals — default to 18 if token misbehaves
+        uint8 dec;
+        try token.decimals() returns (uint8 d) { dec = d; }
+        catch { dec = 18; }
+
+        threshold = _rawThreshold * (10 ** dec);   // decimals-aware threshold
     }
 
-    // owner functions
-    function setOwner(address newOwner) external onlyOwner {
-        emit OwnerChanged(owner, newOwner);
-        owner = newOwner;
+    function setCaller(address _caller) external onlyOwner {
+        caller = _caller;
     }
 
-    // set the trapConfig address printed by drosera apply
-    function setCaller(address c) external onlyOwner {
-        emit CallerChanged(caller, c);
-        caller = c;
-    }
+    // Called by the Drosera trap when threshold is exceeded
+    function respond(bytes calldata) external onlyCaller {
+        uint256 bal = token.balanceOf(safe);
 
-    // set cold wallet address where inflows will be moved (optional)
-    function setColdWallet(address w) external onlyOwner {
-        emit ColdWalletChanged(coldWallet, w);
-        coldWallet = w;
-    }
+        // RISING-EDGE LOGIC:
+        // Only trigger when previous ≤ threshold AND now > threshold
+        if (previousBalance <= threshold && bal > threshold) {
+            uint256 refillAmount = bal - threshold; // amount above threshold
+            // Pull from the funding wallet (must have approved us)
+            require(
+                token.transferFrom(fundingWallet, safe, refillAmount),
+                "transferFrom failed"
+            );
 
-    /// respondToInflow(token, safe, influxAmount)
-    /// - only callable by configured caller (or owner)
-    /// - emits AlertEmitted
-    /// - attempts to move `influxAmount` from `safe` -> `coldWallet` if coldWallet is set and SAFE has approved this contract
-    function respondToInflow(address token, address safe, uint256 influxAmount) external onlyCaller {
-        emit AlertEmitted(token, safe, influxAmount, msg.sender);
-
-        // if coldWallet not set, skip transfer attempt
-        if (coldWallet == address(0)) {
-            return;
+            emit RespondExecuted(previousBalance, token.balanceOf(safe), refillAmount);
         }
 
-        // attempt low-level transferFrom(safe -> coldWallet)
-        (bool ok, bytes memory data) = token.call(abi.encodeWithSignature("transferFrom(address,address,uint256)", safe, coldWallet, influxAmount));
-        // don't revert if transfer failed; emit event for auditing
-        emit TransferAttempt(token, safe, coldWallet, influxAmount, ok, data);
+        previousBalance = bal;
     }
 }
