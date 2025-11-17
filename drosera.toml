@@ -7,7 +7,7 @@ drosera_address = "0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D"
 
 [traps.sudden_inflow]
 path = "out/SuddenInflowTrap.sol/SuddenInflowTrap.json"
-response_contract = "0xeb36D6FC5B20842551Eb13AE030f03039a66b000"
+response_contract = "0xDc2F66D09fA2753e99b2Abdb479d4eB53D13AcF3"
 response_function = "respondToInflow(address,address,uint256)"
 cooldown_period_blocks = 33
 min_number_of_operators = 1
