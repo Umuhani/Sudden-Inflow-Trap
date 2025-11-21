@@ -36,3 +36,9 @@ triggers a response.
 The trap: 1. Reads token balance of SAFE 2. Compares to threshold 3.
 Triggers response when below threshold
 
+
+
+TO deploy the response
+
+ forge create  --rpc-url https://0xrpc.io/hoodi  --private-key $pk  src/InflowResponder.sol:AutoTopUpResponder  --broadcast --constructor-args  0x9A7B8CAeAfADBEc42700CE4c71640909C6521292  0xCBdc71d4E2A3f6DEe40250739c5b3
+0763D66Cf8E  0x69375A9b81633Ce35e758a5972cd037E3Aca1FAa  10000
