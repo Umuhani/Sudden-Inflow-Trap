@@ -2,22 +2,25 @@
 pragma solidity ^0.8.20;
 
 interface IERC20 {
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function balanceOf(address account) external view returns (uint256);
     function decimals() external view returns (uint8);
 }
 
 contract AutoTopUpResponder {
     address public owner;
-    address public caller;              // drosera trap contract
-    IERC20 public token;                // token monitored
-    address public safe;                // destination safe
-    address public fundingWallet;       // pre-approved funding wallet
+    address public caller;               // Drosera trap address
+    IERC20 public token;                 // monitored token
+    address public safe;                 // wallet to protect
+    address public fundingWallet;        // wallet that pre-approved this responder
+    uint256 public threshold;            // scaled threshold
+    uint256 public previousBalance;      // for falling-edge detection
 
-    uint256 public threshold;           // decimals-scaled threshold
-    uint256 public previousBalance;     // for rising-edge detection
-
-    event RespondExecuted(uint256 beforeBalance, uint256 afterBalance, uint256 amount);
+    event TopUpExecuted(
+        uint256 beforeBalance,
+        uint256 afterBalance,
+        uint256 amountSent
+    );
 
     modifier onlyOwner() {
         require(msg.sender == owner, "not-owner");
@@ -25,8 +28,10 @@ contract AutoTopUpResponder {
     }
 
     modifier onlyCaller() {
-        // FIXED: responder is now *closed* by default
-        require(msg.sender == caller || msg.sender == owner, "not-caller");
+        require(
+            msg.sender == caller || msg.sender == owner,
+            "not-caller"
+        );
         _;
     }
 
@@ -34,40 +39,61 @@ contract AutoTopUpResponder {
         address _token,
         address _safe,
         address _fundingWallet,
-        uint256 _rawThreshold       // e.g. "10000" for 10k tokens
+        uint256 _rawThreshold
     ) {
         owner = msg.sender;
         token = IERC20(_token);
         safe = _safe;
         fundingWallet = _fundingWallet;
 
-        // Try reading decimals — default to 18 if token misbehaves
-        uint8 dec;
-        try token.decimals() returns (uint8 d) { dec = d; }
-        catch { dec = 18; }
+        // Safe decimals scaling without overflows
+        uint8 dec = 18;
+        try token.decimals() returns (uint8 d) { dec = d; } catch {}
 
-        threshold = _rawThreshold * (10 ** dec);   // decimals-aware threshold
+        uint256 scale = 1;
+        for (uint8 i = 0; i < dec; i++) {
+            scale = scale * 10;
+        }
+
+        threshold = _rawThreshold * scale;
     }
 
     function setCaller(address _caller) external onlyOwner {
         caller = _caller;
     }
 
-    // Called by the Drosera trap when threshold is exceeded
+    // ✔ Main function called by trap (ABI match with TOML)
+    function respondToInflow(
+        address _token,
+        address _safe,
+        uint256 currentBalance
+    ) external onlyCaller {
+        _handle(currentBalance);
+    }
+
+    // ✔ Optional fallback route (if you ever switched TOML to respond(bytes))
     function respond(bytes calldata) external onlyCaller {
         uint256 bal = token.balanceOf(safe);
+        _handle(bal);
+    }
 
-        // RISING-EDGE LOGIC:
-        // Only trigger when previous ≤ threshold AND now > threshold
-        if (previousBalance <= threshold && bal > threshold) {
-            uint256 refillAmount = bal - threshold; // amount above threshold
-            // Pull from the funding wallet (must have approved us)
-            require(
-                token.transferFrom(fundingWallet, safe, refillAmount),
-                "transferFrom failed"
-            );
+    // ========================= INTERNAL LOGIC ==============================
 
-            emit RespondExecuted(previousBalance, token.balanceOf(safe), refillAmount);
+    function _handle(uint256 bal) internal {
+
+        // Falling-edge detection:
+        // Trigger only when crossing FROM >= threshold TO < threshold
+        if (previousBalance >= threshold && bal < threshold) {
+            uint256 needed = threshold - bal;
+
+            bool ok = token.transferFrom(fundingWallet, safe, needed);
+
+            // Do not revert (operators get slashed on revert)
+            if (ok) {
+                emit TopUpExecuted(previousBalance, token.balanceOf(safe), needed);
+            } else {
+                emit TopUpExecuted(previousBalance, bal, 0);
+            }
         }
 
         previousBalance = bal;
