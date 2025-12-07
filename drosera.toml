@@ -1,0 +1,31 @@
+ethereum_rpc = "https://0xrpc.io/hoodi"
+drosera_rpc = "https://relay.hoodi.drosera.io"
+eth_chain_id = 560048
+drosera_address = "0x91cB447BaFc6e0EA0F4Fe056F5a9b1F14bb06e5D"
+
+[traps]
+
+[traps.sudden_inflow]
+path = "out/SuddenInflowTrap.sol/SuddenInflowTrap.json"
+response_contract = "0xdCbA3C35167b6A27bBCc7369fe828a85dCf0D1F5"
+response_function = "respondToInflow(address,address,uint256)"
+cooldown_period_blocks = 33
+min_number_of_operators = 1
+max_number_of_operators = 2
+block_sample_size = 2
+private_trap = true
+whitelist = ["0xCBdc71d4E2A3f6DEe40250739c5b30763D66Cf8E"]
+address = "0xC89396B79D4CF55d8e49d326Bc1F558665f1C732"
+
+# Uncomment this to deploy the TransferEventTrap
+
+# [traps.transfer_event_trap]
+# path = "out/TransferEventTrap.sol/TransferEventTrap.json"
+# response_contract = "0x183D78491555cb69B68d2354F7373cc2632508C7"
+# response_function = "helloworld(string)"
+# cooldown_period_blocks = 33
+# min_number_of_operators = 1
+# max_number_of_operators = 2
+# block_sample_size = 10
+# private_trap = true
+# whitelist = []
